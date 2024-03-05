@@ -15,7 +15,7 @@ app.use(jsonErrors());
 app.use(express.json())
 
 app.get("/api", (req, res) => {
-    res.json(users);
+    res.json("welcome to weather forecast user data!!");
 })
 app.post("/api/login", (req, res) => {
 
