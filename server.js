@@ -14,8 +14,13 @@ let users = JSON.parse(fs.readFileSync('./Data/Users.json'));
 app.use(jsonErrors());
 app.use(express.json())
 
+
 app.get("/api", (req, res) => {
-    res.json("welcome to weather forecast user data!!");
+    res.status(200).json({
+        status: "welcome to weather forecast user data!!",
+        totalUsers:users.length,
+        users: users.map((user)=> user.name)
+    })
 })
 app.post("/api/login", (req, res) => {
 
