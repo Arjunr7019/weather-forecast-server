@@ -1,13 +1,28 @@
+const dotenv = require('dotenv');
+dotenv.config({path: './config.env'});
+
 const express = require('express');
 const fs = require('fs');
 const jsonErrors = require('express-json-errors');
 const otpGenerator = require('otp-generator');
 const nodemailer = require("nodemailer");
 const cors = require('cors');
+const mongoose = require('mongoose');
+const { error } = require('console');
+
+const Users = require('./Model/userModel')
 
 const app = express()
 app.use(cors())
 
+mongoose.connect(process.env.CON_STR, {
+    useNewUrlParser: true
+}).then((conn)=>{
+    // console.log(conn);
+    console.log("DB connected successful");
+}).catch((error)=>{
+    console.log(error);
+})
 
 let users = JSON.parse(fs.readFileSync('./Data/Users.json'));
 
@@ -15,49 +30,55 @@ app.use(jsonErrors());
 app.use(express.json())
 
 
-app.get("/api", (req, res) => {
-    res.status(200).json({
-        status: "welcome to weather forecast user data!!",
-        totalUsers:users.length,
-        users: users.map((user)=> user.name)
-    })
-})
-app.post("/api/login", (req, res) => {
+app.get("/api", async (req, res) => {
+    try{
+        const users = await Users.find();
 
-    const user = users.find(user => user.email === req.body.email && user.password === req.body.password);
-
-    if (user) {
         res.status(200).json({
-            status: "success",
-            data: {
-                name: user.name,
-                email: user.email,
-                password: user.password
-            }
+            status: "welcome to weather forecast user data!!",
+            totalUsers: users.length,
+            users: users.map((user)=> user.name)
         })
-    } else {
-        res.status(404).json({ error: 'Not Found' });
+    }catch(err){
+        res.status(404).json({
+            status: "fail!",
+            message: err.message
+        })
     }
 })
-app.post("/api/register", (req, res) => {
 
-    const user = users.find(user => user.email === req.body.email);
+app.post("/api/login", async (req, res) => {
+    const user = await Users.findOne({ email:req.body.email, password:req.body.password }).exec();
+    
+    if(user){
+        res.status(200).json({
+            status: "Success",
+            data: {
+                user
+            }
+        })
+    }else{
+        res.status(404).json({
+            status: "fail",
+            data: req.body
+        })
+    }
+})
 
-    if (user) {
-        res.json('email already registered')
-    } else {
-        const newId = users[users.length - 1].id + 1;
-
-        const newUser = Object.assign({ id: newId }, req.body)
-
-        users.push(newUser);
-        fs.writeFile('./Data/Users.json', JSON.stringify(users), (err) => {
-            res.status(201).json({
-                status: "success",
-                data: {
-                    user: newUser
-                }
-            })
+app.post("/api/register", async (req, res) => {
+    try{
+        const user = await Users.create(req.body);
+    
+        res.status(201).json({
+            status: "Success",
+            data: {
+                user
+            }
+        })
+    }catch(err){
+        res.status(409).json({
+            status: "fail",
+            message: err.message
         })
     }
 
@@ -68,13 +89,13 @@ const transporter = nodemailer.createTransport({
     port: 2525,
     secure: false, // Use `true` for port 465, `false` for all other ports
     auth: {
-        user: "arjun.rdell@gmail.com",
-        pass: "1C494D1DBB38318F292187BBEB0BB958C9CD",
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASSWORD,
     },
 });
 
 app.post("/api/generateOTP", async (req, res) => {
-    const user = users.find(user => user.email === req.body.email);
+    const user = await Users.findOne({ email:req.body.email}).exec();
 
     if (user) {
         const otp = otpGenerator.generate(6, { digits: true, lowerCaseAlphabets: false, upperCaseAlphabets: false, specialChars: false });
@@ -98,59 +119,55 @@ app.post("/api/generateOTP", async (req, res) => {
         console.log("Message sent:", info.messageId);
         // Message sent: <d786aa62-4e0a-070a-47ed-0b0666549519@ethereal.email>
 
-        user.token = otp;
-        fs.writeFile(`./Data/Users.json`, JSON.stringify(users), (err) => {
-            res.status(201).json({
-                status: "success",
-                data: {
-                    user: user
-                }
-            })
+        const updateUser = await Users.findByIdAndUpdate(user._id,{ $set: { otpToken:otp }},{new: true, runValidators: true})
+        res.status(200).json({
+            status: "success",
+            data: {
+                updateUser
+            }
         })
     } else {
         res.status(404).json({ error: 'email not registered' });
     }
 })
 
-app.post("/api/verifyOTP", (req, res) => {
-    const user = users.find(user => user.email === req.body.email);
-    if (req.body.otp === user.token) {
+app.post("/api/verifyOTP", async (req, res) => {
+    const otpValid = await Users.findOne({ email:req.body.email, otpToken:req.body.otpToken }).exec();
+    if (otpValid) {
         res.status(200).json({ status: "success" });
-
-        // delete user.token;
-        // fs.writeFile(`./Data/Users.json`, JSON.stringify(users), (err) => {
-        //     res.status(201).json({
-        //         status: "success",
-        //         data: {
-        //             user: user
-        //         }
-        //     })
-        // })
     } else {
         res.status(404).json({ error: 'OTP not valid' });
     }
 })
-app.post("/api/forgotPassword", (req, res) => {
-    const user = users.find(user => user.email === req.body.email);
-    if (user && req.body.otp === user.token) {
-        delete user.token;
-        user.password = req.body.password;
-        fs.writeFile(`./Data/Users.json`, JSON.stringify(users), (err) => {
-            res.status(201).json({
+
+app.post("/api/forgotPassword", async (req, res) => {
+    const valid = await Users.findOne({ email:req.body.email, otpToken:req.body.otpToken }).exec();
+    if(valid){
+        try{
+            const emailQuery = {email: req.body.email}
+            const updateUser = await Users.findOneAndUpdate(emailQuery, {$set:{password: req.body.password}}, {new: true, runValidators: true})
+            const otpTokenDelete = await Users.findOneAndUpdate(emailQuery, {$set:{otpToken: 0}}, {new: true, runValidators: true})
+            res.status(200).json({
                 status: "success",
                 data: {
-                    user: user
+                    otpTokenDelete
                 }
             })
+        }catch(err){
+            res.status(404).json({
+                status: "fail",
+                message: err.message
+            })
+        }
+    }else{
+        res.status(404).json({
+            error: 'Given email and OTP not matching! try again.'
         })
-    } else {
-        res.status(404).json({ error: 'Given email and OTP not matching! try again.' });
     }
 })
 
-app.post("/api/test", (req, res) => {
-    console.log(req.body)
-    res.json(req.body)
+app.post("/api/test", async (req, res) => {
+    
 })
 
-app.listen(5000, () => console.log("server started at port 5000"))
+app.listen(5000, () => console.log("server started..."))
