@@ -2,7 +2,6 @@ const dotenv = require('dotenv');
 dotenv.config({path: './config.env'});
 
 const express = require('express');
-const fs = require('fs');
 const jsonErrors = require('express-json-errors');
 const otpGenerator = require('otp-generator');
 const nodemailer = require("nodemailer");
@@ -23,8 +22,6 @@ mongoose.connect(process.env.CON_STR, {
 }).catch((error)=>{
     console.log(error);
 })
-
-let users = JSON.parse(fs.readFileSync('./Data/Users.json'));
 
 app.use(jsonErrors());
 app.use(express.json())
